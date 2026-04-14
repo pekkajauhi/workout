@@ -2,7 +2,7 @@
   "name": "Workout Timer",
   "short_name": "Workout",
   "description": "Interval, superset, and ladder workout timer",
-  "start_url": "./workout.html",
+  "start_url": "workout.html",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#ffffff",
