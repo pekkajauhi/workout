@@ -11,18 +11,19 @@
 
 <style>
 body { margin:0; font-family:Arial; display:flex; flex-direction:column; height:100vh; transition:background 0.2s; }
-.config { padding:10px; border-bottom:1px solid #ccc; }
+.config { padding:10px; border-bottom:1px solid #ccc; overflow-y:auto; }
 .hidden { display:none; }
-textarea, input, select { width:100%; margin:5px 0 10px; padding:8px; }
-button { padding:10px; margin:5px; font-size:16px; }
+textarea, input, select { width:100%; box-sizing:border-box; margin:5px 0 10px; padding:8px; }
+button { padding:10px 12px; margin:4px; font-size:15px; flex:1; min-width:0; }
+.btn-row { display:flex; flex-wrap:wrap; gap:4px; margin:5px 0; }
 
-.display { flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; }
-.exercise { font-size:56px; font-weight:bold; }
-.next { font-size:20px; opacity:0.7; }
-.set { font-size:24px; margin:15px 0; }
-.timer { font-size:80px; font-weight:bold; }
+.display { flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; padding:0 10px 70px; box-sizing:border-box; }
+.exercise { font-size:clamp(28px, 8vw, 56px); font-weight:bold; }
+.next { font-size:clamp(14px, 4vw, 20px); opacity:0.7; }
+.set { font-size:clamp(16px, 4vw, 24px); margin:15px 0; }
+.timer { font-size:clamp(48px, 15vw, 80px); font-weight:bold; }
 
-.controls { position:fixed; bottom:10px; width:100%; display:flex; justify-content:center; gap:10px; }
+.controls { position:fixed; bottom:0; width:100%; display:flex; flex-wrap:wrap; justify-content:center; gap:6px; padding:8px; box-sizing:border-box; background:rgba(255,255,255,0.95); border-top:1px solid #ddd; }
 </style>
 </head>
 
@@ -38,10 +39,11 @@ button { padding:10px; margin:5px; font-size:16px; }
 <select id="savedWorkouts" onchange="loadWorkout()"></select>
 
 <input id="workoutName" placeholder="Workout name">
+<div class="btn-row">
 <button onclick="saveWorkout()">Save</button>
 <button onclick="deleteWorkout()">Delete</button>
-
 <button onclick="exportWorkouts()">Export</button>
+</div>
 <input type="file" onchange="importWorkouts(event)">
 
 <textarea id="exercises">Push-ups
