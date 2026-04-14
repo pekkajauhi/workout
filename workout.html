@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#ffffff">
+<link rel="manifest" href="manifest.json">
+<title>Workout Timer</title>
+
+<style>
+body { margin:0; font-family:Arial; display:flex; flex-direction:column; height:100vh; transition:background 0.2s; }
+.config { padding:10px; border-bottom:1px solid #ccc; }
+.hidden { display:none; }
+textarea, input, select { width:100%; margin:5px 0 10px; padding:8px; }
+button { padding:10px; margin:5px; font-size:16px; }
+
+.display { flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; }
+.exercise { font-size:56px; font-weight:bold; }
+.next { font-size:20px; opacity:0.7; }
+.set { font-size:24px; margin:15px 0; }
+.timer { font-size:80px; font-weight:bold; }
+
+.controls { position:fixed; bottom:10px; width:100%; display:flex; justify-content:center; gap:10px; }
+</style>
+</head>
+
+<body>
+
+<div class="config" id="config">
+<select id="workoutType">
+<option value="interval">Interval</option>
+<option value="superset">Superset</option>
+<option value="ladder">Ladder</option>
+</select>
+
+<select id="savedWorkouts" onchange="loadWorkout()"></select>
+
+<input id="workoutName" placeholder="Workout name">
+<button onclick="saveWorkout()">Save</button>
+<button onclick="deleteWorkout()">Delete</button>
+
+<button onclick="exportWorkouts()">Export</button>
+<input type="file" onchange="importWorkouts(event)">
+
+<textarea id="exercises">Push-ups
+Pull-ups
+Squats
+Plank</textarea>
+
+<input type="number" id="sets" value="3">
+<input type="number" id="interval" value="180">
+<input type="number" id="ladderTime" value="450">
+
+<button onclick="startWorkout()">Start</button>
+</div>
+
+<div class="display">
+<div class="exercise" id="exerciseName">Ready</div>
+<div class="next" id="nextExercise"></div>
+<div class="set" id="setInfo"></div>
+<div class="timer" id="timer">00:00</div>
+</div>
+
+<div class="controls" id="controls" style="display:none;">
+<button onclick="prevStep()">Prev</button>
+<button onclick="pauseWorkout()">Pause</button>
+<button onclick="resumeWorkout()">Resume</button>
+<button onclick="nextStep(true)">Next</button>
+<button onclick="stopWorkout()">Stop</button>
+</div>
+
+<script>
+// STATE
+let exercises=[], pairs=[];
+let currentExercise=0, currentSet=1, currentPair=0;
+let sets=0, interval=0, ladderTime=0;
+let timeLeft=0, timerId=null;
+let workoutType='interval', isPaused=false;
+let wakeLock=null;
+let keepAwakeInterval = null;
+
+function enableFakeWakeLock() {
+  keepAwakeInterval = setInterval(() => {
+    // Tiny visual change (imperceptible)
+    document.body.style.transform = `translateY(${Math.random() * 0.1}px)`;
+  }, 20000); // every 20 seconds
+}
+
+function disableFakeWakeLock() {
+  clearInterval(keepAwakeInterval);
+}
+const el={
+exercise:document.getElementById('exerciseName'),
+next:document.getElementById('nextExercise'),
+set:document.getElementById('setInfo'),
+timer:document.getElementById('timer'),
+config:document.getElementById('config'),
+controls:document.getElementById('controls')
+};
+
+function formatTime(s){
+  return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+}
+
+// WAKE LOCK
+async function enableWakeLock(){
+  try{
+    if('wakeLock' in navigator){
+      wakeLock = await navigator.wakeLock.request('screen');
+    }
+  }catch(e){}
+}
+function disableWakeLock(){
+  if(wakeLock){ wakeLock.release(); wakeLock=null; }
+}
+
+// SOUND
+function beep(freq=800,duration=150){
+  const ctx=new (window.AudioContext||window.webkitAudioContext)();
+  const osc=ctx.createOscillator();
+  const gain=ctx.createGain();
+  osc.frequency.value=freq;
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start();
+  gain.gain.setValueAtTime(1,ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+duration/1000);
+  osc.stop(ctx.currentTime+duration/1000);
+}
+
+function flashScreen(){
+  document.body.style.background='yellow';
+  setTimeout(()=>document.body.style.background='',200);
+}
+
+// WORKOUT
+function startWorkout(){
+  el.config.classList.add('hidden');
+  el.controls.style.display='flex';
+  enableWakeLock();
+  enableFakeWakeLock();
+
+  workoutType=document.getElementById('workoutType').value;
+  sets=parseInt(document.getElementById('sets').value);
+  interval=parseInt(document.getElementById('interval').value);
+  ladderTime=parseInt(document.getElementById('ladderTime').value);
+
+  const raw=document.getElementById('exercises').value.split('\n').filter(e=>e.trim());
+
+  if(workoutType==='interval'){
+    exercises=raw; currentExercise=0; currentSet=1; timeLeft=interval;
+  }
+  else if(workoutType==='superset'){
+    pairs=[];
+    for(let i=0;i<raw.length;i+=2) pairs.push([raw[i],raw[i+1]||'']);
+    currentPair=0; currentSet=1; timeLeft=interval;
+  }
+  else{
+    exercises=raw; currentExercise=0; timeLeft=ladderTime;
+  }
+
+  runTimer(); updateDisplay();
+}
+
+function runTimer(){
+  clearInterval(timerId);
+  timerId=setInterval(()=>{
+    if(isPaused) return;
+
+    timeLeft--;
+
+    // 🔊 LAST 10 SECONDS BEEP
+    if(timeLeft <= 10 && timeLeft > 0){
+      beep(1000,120);
+    }
+
+    if(timeLeft <= 0){
+      // FINAL TRANSITION
+      beep(1200,300);
+      flashScreen();
+      nextStep();
+    }
+
+    updateDisplay();
+  },1000);
+}
+
+function nextStep(){
+  if(workoutType==='interval'){
+    if(currentSet<sets) currentSet++; else {currentSet=1; currentExercise++;}
+    timeLeft=interval;
+  }
+  else if(workoutType==='superset'){
+    if(currentSet<sets) currentSet++; else {currentSet=1; currentPair++;}
+    timeLeft=interval;
+  }
+  else{
+    currentExercise++; timeLeft=ladderTime;
+  }
+
+  updateDisplay();
+}
+
+function prevStep(){
+  if(workoutType==='interval'){
+    if(currentSet>1) currentSet--;
+    else if(currentExercise>0){ currentExercise--; currentSet=sets; }
+    timeLeft=interval;
+  }
+  else if(workoutType==='superset'){
+    if(currentSet>1) currentSet--;
+    else if(currentPair>0){ currentPair--; currentSet=sets; }
+    timeLeft=interval;
+  }
+  else{
+    if(currentExercise>0) currentExercise--;
+    timeLeft=ladderTime;
+  }
+
+  updateDisplay();
+}
+
+// DISPLAY
+function updateDisplay(){
+  if(workoutType==='interval'){
+    el.exercise.textContent=exercises[currentExercise]||'Done';
+    el.next.textContent='Next: '+(exercises[currentExercise+1]||'-');
+    el.set.textContent=`Exercise ${currentExercise+1}/${exercises.length} | Set ${currentSet}/${sets}`;
+  }
+  else if(workoutType==='superset'){
+    const p=pairs[currentPair]||[];
+    el.exercise.textContent=`${p[0]} + ${p[1]}`;
+    const next=pairs[currentPair+1]||[];
+    el.next.textContent='Next: '+(next[0]?`${next[0]} + ${next[1]}`:'-');
+    el.set.textContent=`Superset ${currentPair+1}/${pairs.length} | Round ${currentSet}/${sets}`;
+  }
+  else{
+    el.exercise.textContent=exercises[currentExercise]||'Done';
+    el.next.textContent='Next: '+(exercises[currentExercise+1]||'-');
+    el.set.textContent=`Exercise ${currentExercise+1}/${exercises.length}`;
+  }
+
+  el.timer.textContent=formatTime(timeLeft);
+}
+
+// CONTROLS
+function pauseWorkout(){ isPaused=true; }
+function resumeWorkout(){ isPaused=false; }
+
+function stopWorkout(){
+  clearInterval(timerId);
+  isPaused=false;
+  disableWakeLock();
+  disableFakeWakeLock();
+  el.config.classList.remove('hidden');
+  el.controls.style.display='none';
+}
+
+// STORAGE (unchanged)
+function getSaved(){ return JSON.parse(localStorage.getItem('workouts')||'{}'); }
+function saveWorkout(){
+  const name=document.getElementById('workoutName').value.trim();
+  if(!name)return alert('Name required');
+  const data={
+    type:document.getElementById('workoutType').value,
+    exercises:document.getElementById('exercises').value,
+    sets:parseInt(document.getElementById('sets').value),
+    interval:parseInt(document.getElementById('interval').value),
+    ladderTime:parseInt(document.getElementById('ladderTime').value)
+  };
+  const w=getSaved(); w[name]=data;
+  localStorage.setItem('workouts',JSON.stringify(w));
+  renderWorkoutList();
+}
+function loadWorkout(){
+  const w=getSaved()[document.getElementById('savedWorkouts').value];
+  if(!w)return;
+  document.getElementById('workoutType').value=w.type;
+  document.getElementById('exercises').value=w.exercises;
+  document.getElementById('sets').value=w.sets;
+  document.getElementById('interval').value=w.interval;
+  document.getElementById('ladderTime').value=w.ladderTime;
+}
+function deleteWorkout(){
+  const name=document.getElementById('savedWorkouts').value;
+  if(!name)return;
+  const w=getSaved(); delete w[name];
+  localStorage.setItem('workouts',JSON.stringify(w));
+  renderWorkoutList();
+}
+function renderWorkoutList(){
+  const s=document.getElementById('savedWorkouts');
+  const w=getSaved();
+  s.innerHTML='<option value=\"\">-- Select --</option>';
+  Object.keys(w).forEach(n=>{
+    const o=document.createElement('option');
+    o.value=n; o.textContent=n;
+    s.appendChild(o);
+  });
+}
+function exportWorkouts(){
+  const blob=new Blob([JSON.stringify(getSaved(),null,2)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='workouts.json';
+  a.click();
+}
+function importWorkouts(e){
+  const f=e.target.files[0];
+  if(!f)return;
+  const r=new FileReader();
+  r.onload=function(){
+    const data=JSON.parse(r.result);
+    localStorage.setItem('workouts',JSON.stringify({...getSaved(),...data}));
+    renderWorkoutList();
+  };
+  r.readAsText(f);
+}
+
+renderWorkoutList();
+
+// Register service worker for PWA/offline support
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js');
+}
+
+// Wake lock recovery
+document.addEventListener('visibilitychange',()=>{
+  if(wakeLock && document.visibilityState==='visible'){
+    enableWakeLock();
+    enableFakeWakeLock();
+  }
+});
+</script>
+
+</body>
+</html>
